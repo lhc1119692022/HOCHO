@@ -19,7 +19,7 @@ export function findChrome() {
   return chrome;
 }
 
-// 复制一份插件到工作目录。extraHosts 追加主机权限；grantAllUrls 把可选的 <all_urls> 直接设为已授予。
+// 复制一份插件到工作目录；测试扩展的 host 授权仅用于后台截图，不会改发布清单。
 export function prepareExtension({ src, dir, extraHosts = [], grantAllUrls = false }) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.cpSync(src, dir, {
@@ -118,8 +118,8 @@ export async function launchChrome({ profile, startUrl = 'about:blank', fakeUi =
     return sessionId;
   }
 
-  async function openTarget(url) {
-    const { targetId } = await cdp('Target.createTarget', { url });
+  async function openTarget(url, { background = false } = {}) {
+    const { targetId } = await cdp('Target.createTarget', { url, background });
     return { targetId, sessionId: await attach(targetId) };
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "hocho",
-  "version": "0.7.0",
+  "version": "0.7.8",
   "private": true,
   "type": "module",
   "description": "HOCHO AI 陪伴 Chrome 插件（测试脚本用；插件本身不需要运行任何程序）",

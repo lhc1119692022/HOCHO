@@ -2,7 +2,7 @@
 // 所以在这个普通标签页里，由用户点「允许」按钮逐项触发浏览器提示。
 //
 //   microphone —— 麦克风（必需）
-//   screen     —— 读取网页画面（<all_urls> 可选主机权限，用于跟随当前标签页截图）
+//   screen     —— 当前网页画面（点击 HOCHO 图标时由 activeTab 临时授权）
 //   camera     —— 摄像头（只在选了摄像头 / Auto 模式时需要）
 
 const ALL = ['microphone', 'screen', 'camera'];

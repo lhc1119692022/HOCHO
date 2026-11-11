@@ -21,7 +21,7 @@ const ext = prepareExtension({
   src: SRC,
   dir: path.join(WORK, 'ext'),
   extraHosts: ['http://127.0.0.1/*', 'ws://127.0.0.1/*'],
-  grantAllUrls: true, // 模拟用户已在授权页允许「看网页」
+  grantAllUrls: true, // 测试副本临时加 host 权限以允许后台截图；发布 manifest 单独检查不含该权限。
 });
 const browser = await launchChrome({
   profile: path.join(WORK, 'profile'),
@@ -40,8 +40,15 @@ const text = (sid, selector) => ev(sid, `document.querySelector(${JSON.stringify
 try {
   const { id: extId } = await cdp('Extensions.loadUnpacked', { path: ext });
   check('插件可以被加载', Boolean(extId), extId);
+  const shippingManifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
+  check(
+    '发布清单不申请所有网站权限',
+    !(shippingManifest.permissions || []).includes('<all_urls>') &&
+      !(shippingManifest.host_permissions || []).includes('<all_urls>') &&
+      !(shippingManifest.optional_host_permissions || []).includes('<all_urls>'),
+  );
   const popupUrl = `chrome-extension://${extId}/src/popup/popup.html`;
-  let popup = await openTarget(popupUrl);
+  let popup = await openTarget(popupUrl, { background: true });
   let P = popup.sessionId;
   await sleep(900);
 
@@ -73,7 +80,17 @@ try {
     { gesture: true },
   );
   await waitUntil(() => ev(P, `document.getElementById('keyDot').dataset.state === 'ok'`), { label: '正确 Key' });
-  check('点「连接」后 Key 有效：只亮绿点，没有多余文字', await ev(P, `document.getElementById('keyError').hidden`));
+  check('点「连接」后 Key 有效：亮绿点', await ev(P, `document.getElementById('keyDot').dataset.state === 'ok' && document.getElementById('keyError').hidden`));
+  // HTTP 模型列表接口偶尔会被浏览器 CORS/网络拦截，但这不代表 WS 实时 Key 失效。
+  await ev(P, `window.__hochoFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError('Failed to fetch')); 1`);
+  await ev(P, `document.getElementById('connectBtn').click(); 1`, { gesture: true });
+  await waitUntil(() => ev(P, `document.getElementById('keyDot').dataset.state === 'saved'`), { label: 'HTTP 校验不可用时保留 Key' });
+  check(
+    '模型列表 Failed to fetch 不再误报 Key 失效',
+    await ev(P, `document.getElementById('keyError').dataset.level === 'warn' && document.getElementById('keyError').textContent.includes('不代表实时连接失败')`),
+  );
+  await ev(P, `window.fetch = window.__hochoFetch; delete window.__hochoFetch; 1`);
+  await ev(P, `document.getElementById('keyError').hidden = true; document.getElementById('keyDot').dataset.state = 'ok'; 1`);
   check(
     '显示 Key 的小眼睛在输入框里面',
     await ev(
@@ -89,20 +106,48 @@ try {
     `[...document.querySelectorAll('#sheet-settings .sheet-body .label')].map(l => l.textContent.trim()).join('|')`,
   );
   check(
-    '设置顺序：Key → 音色 → 陪伴规则 → 记忆 → 网页范围 → 清晰度 → 实时模型',
-    order === 'API Key|音色|陪伴规则|记忆|网页范围|画面清晰度|实时模型',
+    '设置顺序：Key → 音色 → 陪伴规则 → 记忆 → 清晰度 → 实时模型 → 本地数据',
+    order === 'API Key|音色|陪伴规则|记忆|画面清晰度|实时模型|本地数据',
     order,
   );
-  check('「所有网站自动跟随」默认关闭', !(await ev(P, `document.getElementById('allUrlsToggle').checked`)));
+  check(
+    '清晰度和音色下拉框一样高（不是扁扁一条）',
+    (await ev(P, `(() => {
+      const q = document.getElementById('qualityControl').getBoundingClientRect().height;
+      const v = document.getElementById('voiceSelect').getBoundingClientRect().height;
+      return Math.abs(q - v) <= 4;
+    })()`)),
+    await ev(P, `JSON.stringify({ quality: document.getElementById('qualityControl').getBoundingClientRect().height, voice: document.getElementById('voiceSelect').getBoundingClientRect().height })`),
+  );
+  check(
+    '设置里不再有音量滑块（不把这种控制丢给用户）',
+    await ev(P, `!document.getElementById('videoVolume') && !document.getElementById('voiceVolume')`),
+  );
+  check(
+    '设置控件不再迷你（输入框 ≥ 44px 高）',
+    (await ev(P, `document.getElementById('apiKeyInput').getBoundingClientRect().height >= 44`)) &&
+      (await ev(P, `parseFloat(getComputedStyle(document.querySelector('.label')).fontSize) >= 13`)),
+    await ev(P, `JSON.stringify({ input: document.getElementById('apiKeyInput').getBoundingClientRect().height, label: getComputedStyle(document.querySelector('.label')).fontSize })`),
+  );
+  check('记忆共享默认开启', await ev(P, `document.getElementById('memorySharedToggle').checked`));
   check('实时模型默认 moss-live-1.0', (await ev(P, `document.getElementById('modelInput').value`)) === 'moss-live-1.0');
   check(
-    '记忆：两个复选框在同一行，默认开启、角色共享',
+    '设置里只有一个「记忆共享」复选框，且默认勾选',
     await ev(
       P,
-      `(() => { const a = document.getElementById('memoryToggle'); const b = document.getElementById('separateToggle');
-         return a.checked && !b.checked && Math.abs(a.getBoundingClientRect().top - b.getBoundingClientRect().top) < 3; })()`,
+      `(() => {
+        const field = [...document.querySelectorAll('#sheet-settings .field')].find(n => n.querySelector('#memorySharedToggle'));
+        const boxes = [...field.querySelectorAll('input[type=checkbox]')];
+        return boxes.length === 1 && boxes[0].parentElement.textContent.trim() === '记忆共享' && boxes[0].checked;
+      })()`,
     ),
   );
+  await click(P, '#memorySharedToggle');
+  await waitUntil(() => ev(P, `chrome.storage.local.get(['memoryEnabled','separateMemory']).then(v => v.memoryEnabled === true && v.separateMemory === true)`), { label: '关闭记忆共享' });
+  check('关闭记忆共享后按角色区分记忆', !await ev(P, `document.getElementById('memorySharedToggle').checked`));
+  await click(P, '#memorySharedToggle');
+  await waitUntil(() => ev(P, `chrome.storage.local.get(['memoryEnabled','separateMemory']).then(v => v.memoryEnabled === true && v.separateMemory === false)`), { label: '开启记忆共享' });
+  check('开启记忆共享后所有角色共用记忆', await ev(P, `document.getElementById('memorySharedToggle').checked`));
   check(
     '清晰度：一行三段，默认标准',
     await ev(
@@ -334,6 +379,59 @@ try {
     `${s1.frames.screen} 帧 ${JSON.stringify(s1.lastFrame.screen)}`,
   );
   check('状态显示陪伴中', (await ev(P, `document.getElementById('status').dataset.state`)) === 'live');
+
+  // The test popup runs in a background tab; seed the initial target as the action click would.
+  const originalTab = await ev(
+    P,
+    `chrome.tabs.query({ lastFocusedWindow: true }).then(t => t.filter(x => x.id && !/^(chrome|edge|about|chrome-extension|devtools):/i.test(x.url || '')).find(x => x.active) || null)`,
+  );
+  const originalTabId = originalTab?.id;
+  await ev(
+    P,
+    `chrome.runtime.sendMessage({ target: 'offscreen', type: 'command', payload: { cmd: 'set-target', tabId: ${originalTabId}, url: ${JSON.stringify(originalTab?.url || '')}, title: ${JSON.stringify(originalTab?.title || '')} } })`,
+  );
+  await waitUntil(
+    () => ev(P, `chrome.runtime.sendMessage({ target: 'offscreen', type: 'debug-target' }).then(v => v.targetTabId === ${originalTabId})`),
+    { label: '设置初始陪看目标' },
+  );
+
+  // ---------- 切页必须手动点击 HOCHO 图标 ----------
+  const followTabId = await ev(
+    P,
+    `chrome.tabs.create({ url: 'http://127.0.0.1:${PORT}/page.html?manual-follow=1', active: true }).then(t => t.id)`,
+  );
+  await sleep(1200);
+  const pausedState = await ev(P, `chrome.runtime.sendMessage({ target: 'offscreen', type: 'debug-target' })`);
+  check('切到新标签不会自动更换陪看目标', pausedState?.targetTabId === originalTabId, JSON.stringify(pausedState));
+  check('切换标签后暂停旧页音轨，避免串入旧视频声', pausedState?.audioTabId == null, JSON.stringify(pausedState));
+  check(
+    '新页面 HOCHO 图标悬停提示手动切换',
+    await ev(P, `chrome.action.getTitle({ tabId: ${followTabId} }).then(t => t.includes('点击切换陪看目标'))`),
+  );
+
+  // 新标签已激活后重新打开弹窗，弹窗初始化按当前页触发手动切换。
+  await cdp('Page.reload', {}, P);
+  await cdp('Runtime.enable', {}, P);
+  const manualState = await waitUntil(
+    () => ev(P, `chrome.runtime.sendMessage({ target: 'offscreen', type: 'debug-target' }).then(v => v.targetTabId === ${followTabId} ? v : null)`),
+    { timeout: 10000, interval: 100, label: '点击图标后的手动切换' },
+  ).catch(() => null);
+  check('打开当前页 HOCHO 后切换陪看目标', manualState?.targetTabId === followTabId, JSON.stringify(manualState));
+  check(
+    '切换失败时提示当前网页声音未接入',
+    await ev(P, `document.getElementById('targetSwitchHint').hidden || document.getElementById('targetSwitchText').textContent.includes('没有接上')`),
+  );
+
+  await ev(P, `chrome.tabs.update(${originalTabId}, { active: true }).then(() => 1)`);
+  await sleep(300);
+  await cdp('Page.reload', {}, P);
+  await cdp('Runtime.enable', {}, P);
+  await waitUntil(
+    () => ev(P, `chrome.runtime.sendMessage({ target: 'offscreen', type: 'debug-target' }).then(v => v.targetTabId === ${originalTabId})`),
+    { timeout: 10000, interval: 100, label: '手动切回原页面' },
+  );
+  await ev(P, `chrome.tabs.remove(${followTabId}).catch(() => {})`);
+  await sleep(300);
 
   // ---------- 图标角标：一眼看出这个网页有没有在生效 ----------
   const tabId = await ev(P, `chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(t => t[0].id)`);

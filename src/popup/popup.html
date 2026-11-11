@@ -64,6 +64,10 @@
           </select>
         </label>
         <p id="otherTabHint" class="other-tab" hidden></p>
+        <p id="followHint" class="follow-hint" hidden></p>
+        <div id="targetSwitchHint" class="target-switch-hint" hidden>
+          <span id="targetSwitchText"></span>
+        </div>
         <div id="subtitle" class="subtitle" hidden>
           <b id="subtitleWho"></b><span id="subtitleText"></span>
         </div>
@@ -202,32 +206,33 @@
           <div class="field">
             <span class="label">记忆</span>
             <div class="checks">
-              <label class="check-item"><input id="memoryToggle" type="checkbox" class="check" /><span>长期记忆</span></label>
-              <label class="check-item" id="separateRow"><input id="separateToggle" type="checkbox" class="check" /><span>角色独立</span></label>
+              <label class="check-item"><input id="memorySharedToggle" type="checkbox" class="check" /><span>记忆共享</span></label>
             </div>
-          </div>
-
-          <div class="field">
-            <span class="label">网页范围</span>
-            <div class="checks">
-              <label class="check-item"><input id="allUrlsToggle" type="checkbox" class="check" /><span>所有网站自动跟随</span></label>
-            </div>
-            <span class="hint-text">关闭时只看你点过 HOCHO 图标的网页，换了网页再点一下图标就会跟过去。打开后切换标签页会自动跟随，需要额外授权「读取所有网站」。</span>
           </div>
 
           <div class="field">
             <span class="label">画面清晰度</span>
-            <div id="qualityControl" class="seg small">
+            <div id="qualityControl" class="seg">
               <span class="seg-thumb"></span>
               <button class="seg-opt" data-quality="low" type="button">省流</button>
               <button class="seg-opt" data-quality="standard" type="button">标准</button>
               <button class="seg-opt" data-quality="high" type="button">清晰</button>
             </div>
+            <span class="hint-text">画面越大越清楚，也越费流量。默认标准。</span>
           </div>
 
           <div class="field">
             <span class="label">实时模型</span>
             <input id="modelInput" type="text" spellcheck="false" placeholder="moss-live-1.0" />
+          </div>
+
+          <div class="field">
+            <span class="label">本地数据</span>
+            <div class="clear-data">
+              <span id="clearDataHint" class="hint-text">本地已用：计算中…</span>
+              <button id="clearDataBtn" class="btn danger" type="button">清理</button>
+            </div>
+            <span class="hint-text">对话历史、各视频的摘要、缓存的音色列表会被清掉；API Key、角色和设置保留。</span>
           </div>
         </div>
       </div>

@@ -10,6 +10,11 @@ import { loadSettings, saveSettings } from './shared/storage.js';
 const OFFSCREEN_PATH = 'src/offscreen/offscreen.html';
 let creating = null;
 
+// 升级时撤销旧版本可能授予的全站访问权限。
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+});
+
 async function hasOffscreen() {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
@@ -105,6 +110,10 @@ async function paintBadge(tabId) {
     await chrome.action.setBadgeText({ tabId, text });
     if (text) await chrome.action.setBadgeBackgroundColor({ tabId, color });
     await chrome.action.setBadgeTextColor?.({ tabId, color: '#FFFFFF' });
+    await chrome.action.setTitle({
+      tabId,
+      title: text && color === BADGE_COLORS.other ? 'HOCHO：点击切换陪看目标到当前网页' : 'HOCHO',
+    });
   } catch {
     // 标签页已关闭时忽略。
   }
@@ -117,30 +126,26 @@ async function repaintAllBadges() {
   }
 }
 
-// 切换标签页时立刻更新角标：这样在任何页面上抬头看图标就知道这个页面有没有在生效。
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await paintBadge(tabId);
-  const { allUrlsFollow } = await chrome.storage.local.get('allUrlsFollow');
-  if (!allUrlsFollow) return;
-  const granted = await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
-  if (!granted) return;
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab || /^(chrome|edge|about|chrome-extension|devtools):/i.test(tab.url || '')) return;
-  chrome.runtime.sendMessage({
-    target: 'offscreen',
-    type: 'tab-activated',
-    payload: { tabId, url: tab.url || '', title: tab.title || '' },
-  }).catch(() => {});
+// 切换标签页只刷新角标，并暂停旧页音轨；切换采集目标必须由用户点击 HOCHO 图标触发。
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  paintBadge(tabId);
+  hasOffscreen()
+    .then((exists) => exists && chrome.runtime.sendMessage({
+      target: 'offscreen',
+      type: 'tab-deactivated',
+      payload: { activeTabId: tabId },
+    }))
+    .catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener(() => {
   chrome.action.setBadgeText({ text: '' }).catch(() => {});
 });
 
-// 新开 / 切换到的标签页也要立刻有角标，否则用户看不出这个网页有没有在生效。
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id) setTimeout(() => paintBadge(tab.id), 300);
 });
+
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === 'complete') paintBadge(tabId);
 });
@@ -150,7 +155,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.target === 'bg' && msg.type === 'session-status') {
     sessionStatus = {
       state: msg.payload?.state || 'idle',
-      targetTabId: Number.isInteger(msg.payload?.targetTabId) ? msg.payload.targetTabId : sessionStatus.targetTabId,
+      targetTabId: msg.payload?.targetTabId === null
+        ? null
+        : Number.isInteger(msg.payload?.targetTabId)
+          ? msg.payload.targetTabId
+          : sessionStatus.targetTabId,
     };
     repaintAllBadges();
     sendResponse({ ok: true });

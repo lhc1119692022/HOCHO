@@ -8,7 +8,7 @@ import {
   DEFAULT_SCREEN_MODE,
 } from './defaults.js';
 
-export const SETTINGS_VERSION = 6;
+export const SETTINGS_VERSION = 8;
 
 // 之前版本的默认陪伴规则。升级时如果用户没改过，就换成新默认。
 const LEGACY_INSTRUCTIONS = `你在浏览器插件里陪用户一起看网页、刷视频，用语音聊天。
@@ -31,18 +31,18 @@ function defaults() {
     voiceEnabled: true,
     // 「听视频」：默认打开，视频真的出声时才建立第二条连接（会额外计费）
     shareVideoAudio: true,
+    // 她的声音固定放大倍数（模型语音本身比视频原声小）。不提供给用户调，避免多一个看不懂的选项。
+    voiceVolume: 1.8,
     // 按视频网址记住：手动选的视频类型、视频内容摘要
     videoTypeByKey: {},
     videoSummaries: {},
     // 主动评论：档位存在每个角色上；在角色编辑里点「测试」通过后才生效
     proactivityVerified: false,
-    // 「所有网站自动跟随」：默认关，打开时才申请读取所有网站的权限
-    allUrlsFollow: false,
     messages: [],
     selectedModel: '',
     modelOptions: [],
     installId: '',
-    // 长期记忆：默认所有角色共享同一份记忆；开启 separateMemory 后每个角色各自独立。
+    // 记忆：默认共享。separateMemory=true 时每个角色各自独立。
     memoryEnabled: true,
     separateMemory: false,
     instructions: DEFAULT_INSTRUCTIONS,
@@ -87,6 +87,9 @@ function migrate(stored) {
   }
   // 0.7.0：「听视频」正式加入弹窗，默认打开（之前的版本在弹窗里被强制关掉并存了下来）。
   if (from < 6) settings.shareVideoAudio = true;
+  // 0.7.2：发现她的声音明显比视频原声小。之前统一存成 1，这里改成新的默认提升值。
+  // 只在用户没动过（正好是 1）时才改，避免覆盖用户自己调过的音量。
+  if (from < 7 && Number(settings.voiceVolume) === 1) settings.voiceVolume = 1.8;
   settings.version = SETTINGS_VERSION;
   return settings;
 }
@@ -114,9 +117,10 @@ export async function loadSettings() {
       patch.instructions = DEFAULT_INSTRUCTIONS;
     }
     if (from < 6) patch.shareVideoAudio = true;
+    if (from < 7) patch.voiceVolume = settings.voiceVolume;
     await chrome.storage.local.set(patch);
     // 已删除功能留下的字段
-    await chrome.storage.local.remove(['relayUrl', 'sourceMode', 'proactivity', 'cameraEnabled']).catch(() => {});
+    await chrome.storage.local.remove(['relayUrl', 'sourceMode', 'proactivity', 'cameraEnabled', 'allUrlsFollow']).catch(() => {});
   }
   return settings;
 }

@@ -30,6 +30,8 @@ const MAX_RECONNECTS = 3;
 const VIDEO_BUFFER_LIMIT = 512 * 1024;
 const PING_INTERVAL_MS = 25000;
 const MIC_ACTIVE_WINDOW_MS = 2000;
+// 麦克风电平超过这个值就当作「你在说话」，把视频压低一点。
+const USER_SPEAKING_RMS = 0.035;
 
 class ServerError extends Error {
   constructor(info, prefix = '服务端错误') {
@@ -58,6 +60,9 @@ export class CompanionSession extends EventTarget {
     this.mic = null;
     this.player = null;
     this.muted = Boolean(muted);
+    // 闪避：她自己说话，或你在说话，都会把视频压低一点。
+    this.assistantSpeaking = false;
+    this.userSpeaking = false;
     this.tabAudio = null;
     this.tabAudioHint = tabAudio;
     // 视频监听（第二条 MOSS Live 连接，规格 §4.3）
@@ -72,6 +77,7 @@ export class CompanionSession extends EventTarget {
     this.videoFailures = 0;
     this.videoRetryAt = 0;
     this.videoLastError = '';
+    this.lastSwitchError = '';
     this.pendingVideoLines = [];
     this.timelineStartedAt = 0;
     this.lastMicVoiceAt = 0;
@@ -115,6 +121,8 @@ export class CompanionSession extends EventTarget {
     this.sessionId = this.settings.sessionId || null;
     try {
       this.player = new PcmPlayer();
+      // 她自己的音量（默认 1，可在设置里调大）。
+      this.player.setVolume(Number(this.settings.voiceVolume) || 1);
       // 先把标签页声音/画面接进来（streamId 有时效），再初始化播放器和麦克风。
       if (this.captureMode === 'tab') await this.startTabAudio();
       await this.player.init();
@@ -126,7 +134,8 @@ export class CompanionSession extends EventTarget {
       );
       this.player.addEventListener('active', (e) => {
         // 她开口时把标签页里的视频音量压下去，说完再平滑恢复。
-        this.tabAudio?.setDucked(e.detail.active);
+        this.assistantSpeaking = e.detail.active;
+        this.updateDucking();
         this.emit('assistant-speaking', { speaking: e.detail.active });
       });
 
@@ -135,6 +144,12 @@ export class CompanionSession extends EventTarget {
         onFrame: (pcm) => this.onMicFrame(pcm),
         onLevel: (level) => {
           if (level >= 0.01) this.lastMicVoiceAt = Date.now();
+          // 你说话时也把视频压低一点，减少你的麦克风把视频声收进去。
+          const speaking = level >= USER_SPEAKING_RMS;
+          if (speaking !== this.userSpeaking) {
+            this.userSpeaking = speaking;
+            this.updateDucking();
+          }
           this.emit('mic-level', { level });
         },
       });
@@ -235,15 +250,38 @@ export class CompanionSession extends EventTarget {
     this.sendFocus();
   }
 
-  // 切到另一个网页（点插件图标，或开启了「所有网站自动跟随」）：
-  // 只切采集目标，不重建 MOSS Live 会话，对话历史也保留。
+  pauseTabAudioForInactiveTab(activeTabId) {
+    if (this.stopping || this.captureMode !== 'tab' || activeTabId === this.settings.targetTabId) return false;
+    reportSessionStatus({ state: this.state, targetTabId: null });
+    if (!this.tabAudio) return true;
+    this.clearVideoContext();
+    this.stopVideoSampling();
+    this.tabAudio.stop();
+    this.tabAudio = null;
+    this.sources.screen?.setVideo?.(null);
+    this.lastSwitchError = '已暂停旧网页声音；点击工具栏 HOCHO 图标切换到当前网页';
+    this.emit('tab-audio', this.tabAudioState());
+    return true;
+  }
+
+  // 切到另一个网页：由用户点击 HOCHO 图标触发，使用该页的授权采集画面与音轨。
   async switchTarget(tabId, url = '', title = '') {
-    if (this.stopping || !Number.isInteger(tabId)) return;
+    if (this.stopping || !Number.isInteger(tabId)) return false;
+    const changed = this.settings.targetTabId !== tabId;
     this.settings.targetTabId = tabId;
     if (url) this.settings.targetUrl = url;
     if (title) this.settings.targetTitle = title;
-    if (this.captureMode !== 'tab') return;
-    await this.switchTabAudio(tabId);
+    this.otherTabNoticed = null;
+    this.emit('other-tab', null);
+    reportSessionStatus({ state: this.state, targetTabId: tabId });
+    if (this.captureMode !== 'tab') return false;
+
+    if (changed || !this.tabAudio || this.tabAudio.tabId !== tabId) {
+      await this.switchTabAudio(tabId);
+    }
+    const audio = this.tabAudio?.tabId === tabId;
+    this.emit('target-switched', { tabId, title: title || '新网页', audio, requiresClick: !audio, error: this.lastSwitchError });
+    return true;
   }
 
   async startSource(kind) {
@@ -298,7 +336,9 @@ export class CompanionSession extends EventTarget {
   // ---------- 标签页声音 ----------
 
   createTabAudioCapture() {
-    const capture = new TabAudioCapture({ onFrame: (pcm) => this.onVideoAudioFrame(pcm) });
+    const capture = new TabAudioCapture({
+      onFrame: (pcm) => this.onVideoAudioFrame(pcm),
+    });
     capture.addEventListener('audible', (e) => {
       // 视频刚开始出声时立刻补一帧，不用等到下一个取帧周期。
       if (e.detail.audible) this.lastGrab.screen = -Infinity;
@@ -323,45 +363,67 @@ export class CompanionSession extends EventTarget {
       }
       this.tabAudio = capture;
       // 如果接入时 TA 正好在说话，立刻保持压低状态。
-      capture.setDucked(Boolean(this.player?.active));
+      capture.setDucked(this.shouldDuckVideo());
       if (this.shareVideoAudio) this.setupVideoContext(capture);
       this.startVideoSampling();
       this.emit('tab-audio', this.tabAudioState());
     } catch (error) {
-      // 标签页声音是增强项：没有它也能正常聊天，所以不打断会话。
+      // 标签页声音是增强项：没有它也能正常聊天，所以不打断会话，但保留真正的错误以便诊断切页失败。
+      this.lastSwitchError = error?.message || String(error);
       console.warn('[HOCHO] tab audio unavailable', error);
-      this.notice('warn', '这次没接到标签页里的声音，只能听到麦克风。');
+      this.notice('warn', `这次没接到标签页里的声音（${this.lastSwitchError}），只能听到麦克风。`);
     }
   }
 
-  // 用户切换标签页时，把“听视频”的那一路跟着切过去（画面本来就会跟随当前标签页）。
+  // 只有用户点击 HOCHO 图标切换目标后，才重连新网页音轨。
   async switchTabAudio(tabId) {
-    if (this.stopping || this.captureMode !== 'tab' || !Number.isInteger(tabId)) return;
+    if (this.stopping || this.captureMode !== 'tab' || !Number.isInteger(tabId)) return false;
+    this.lastSwitchError = '';
     if (!this.tabAudio) {
       this.tabAudioHint = { tabId };
       await this.startTabAudio();
-      this.sources.screen?.setVideo?.(this.tabAudio?.video || null);
-      return;
+      this.sources.screen?.setVideo?.(this.tabAudio?.tabId === tabId ? this.tabAudio.video : null);
+      if (this.tabAudio?.tabId === tabId) return true;
+      this.lastSwitchError ||= '浏览器没有给新标签页的视频声音采集流';
+      this.sources.screen?.setVideo?.(null);
+      this.notice('warn', `已经切换到「${this.settings.targetTitle || '新网页'}」，但浏览器没有给这个标签页的声音采集权限。画面会跟随，视频声音暂时听不到。`);
+      this.emit('tab-audio', this.tabAudioState());
+      return false;
     }
-    if (this.tabAudio.tabId === tabId) return;
+    if (this.tabAudio.tabId === tabId) return true;
     const previous = this.tabAudio;
+    // 先释放旧标签页采集，再申请新目标；避免 Chrome 拒绝同一扩展的第二条活动 tabCapture 流。
+    this.clearVideoContext();
+    previous.stop();
+    if (this.tabAudio === previous) this.tabAudio = null;
+    this.sources.screen?.setVideo?.(null);
+    this.emit('tab-audio', this.tabAudioState());
+
     const capture = this.createTabAudioCapture();
     try {
       await capture.start({ tabId }, { withVideo: true, withAudio: true });
       if (this.stopping) {
         capture.stop();
-        return;
+        return false;
       }
-      this.clearVideoContext();
       this.tabAudio = capture;
-      capture.setDucked(Boolean(this.player?.active));
+      capture.setDucked(this.shouldDuckVideo());
       if (this.shareVideoAudio) this.setupVideoContext(capture);
-      previous.stop();
       this.sources.screen?.setVideo?.(capture.video || null);
+      this.lastSwitchError = '';
       this.emit('tab-audio', this.tabAudioState());
+      return true;
     } catch (error) {
       capture.stop();
+      // 不要继续拿旧标签页的音频/视频冒充新目标。画面退回当前标签页截图。
+      if (this.tabAudio === capture) this.tabAudio = null;
+      this.sources.screen?.setVideo?.(null);
+      this.clearVideoContext();
+      this.lastSwitchError = `${error?.name || ''} ${error?.message || error}`.trim();
       console.warn('[HOCHO] switch tab audio failed', error);
+      this.notice('warn', `陪看目标已切换到「${this.settings.targetTitle || '新网页'}」，但浏览器拒绝了这个标签页的声音采集（${this.lastSwitchError}）。画面会跟随新网页，视频声音暂时听不到。`);
+      this.emit('tab-audio', this.tabAudioState());
+      return false;
     }
   }
 
@@ -862,6 +924,17 @@ export class CompanionSession extends EventTarget {
     this.setMuted(!this.voiceEnabled);
   }
 
+  // 视频什么时候该压低：她自己说话，或你正在说话。两边任一为真就压。
+  shouldDuckVideo() {
+    return Boolean(this.assistantSpeaking || this.userSpeaking);
+  }
+
+  // 集中处理闪避，避免各处时序不一致导致有时压有时不压。
+  updateDucking() {
+    this.tabAudio?.setDucked(this.shouldDuckVideo());
+  }
+
+  // 视频声音：视频本身不经过她，音量固定原样播放；她或你说话时自动压低。
   setShareVideoAudio(enabled) {
     this.shareVideoAudio = Boolean(enabled);
     this.settings.shareVideoAudio = this.shareVideoAudio;

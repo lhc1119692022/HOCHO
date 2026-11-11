@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HOCHO",
-  "version": "0.7.1",
+  "version": "0.7.8",
   "description": "边看网页、边刷视频边聊天的 AI 陪伴插件。",
   "minimum_chrome_version": "116",
   "icons": {
@@ -23,6 +23,5 @@
     "type": "module"
   },
   "permissions": ["offscreen", "storage", "declarativeNetRequestWithHostAccess", "tabCapture", "activeTab"],
-  "host_permissions": ["https://api.mosi.cn/*", "wss://api.mosi.cn/*"],
-  "optional_host_permissions": ["<all_urls>"]
+  "host_permissions": ["https://api.mosi.cn/*", "wss://api.mosi.cn/*"]
 }

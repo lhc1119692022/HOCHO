@@ -24,6 +24,7 @@ const snapshot = {
   messages: [],
   // 最近的连接/权限错误，弹窗里点状态文字可以查看
   errors: [],
+  targetSwitch: null,
 };
 
 function broadcast(type, detail) {
@@ -96,6 +97,10 @@ function wire(s) {
     snapshot.videoType = e.detail;
     broadcast('video-type', e.detail);
   });
+  s.addEventListener('target-switched', (e) => {
+    snapshot.targetSwitch = e.detail;
+    broadcast('target-switched', e.detail);
+  });
   s.addEventListener('other-tab', (e) => {
     snapshot.otherTab = e.detail;
     broadcast('other-tab', e.detail);
@@ -135,6 +140,7 @@ async function start(payload) {
   snapshot.videoType = { typeId: 'general', videoKey: '' };
   snapshot.otherTab = null;
   snapshot.errors = [];
+  snapshot.targetSwitch = null;
   wire(session);
 
   await session.start().catch(() => {
@@ -162,14 +168,26 @@ async function command(payload) {
       await saveSettingsToBg({ screenMode: payload.value });
       await session?.setScreenMode(payload.value, payload.tabAudio || null);
       break;
-    case 'set-target':
-      await session?.switchTarget(payload.tabId, payload.url, payload.title);
-      break;
+    case 'set-target': {
+      const switched = await session?.switchTarget(payload.tabId, payload.url, payload.title);
+      return { switched: Boolean(switched), audioTabId: session?.tabAudio?.tabId ?? null, error: session?.lastSwitchError || '' };
+    }
     case 'set-video-audio':
       session?.setShareVideoAudio(Boolean(payload.value));
       break;
     case 'set-video-type':
       session?.setVideoType(payload.value);
+      break;
+    case 'clear-history':
+      if (session) {
+        session.messages = [];
+        session.pendingVideoLines = [];
+        session.videoSummary = null;
+      }
+      snapshot.messages = [];
+      snapshot.lines = [];
+      snapshot.errors = [];
+      await saveSettingsToBg({ messages: [], videoSummaries: {}, videoTypeByKey: {} });
       break;
     case 'refresh-character': {
       // 角色编辑里改了主动评论档位等，正在用的角色立刻生效（不重连）。
@@ -217,13 +235,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await stop();
           sendResponse({ ok: true });
           break;
-        case 'command':
-          await command(msg.payload);
-          sendResponse({ ok: true });
+        case 'command': {
+          const result = await command(msg.payload);
+          sendResponse({ ok: true, ...(result || {}) });
           break;
-        case 'tab-activated':
-          await session?.switchTarget(msg.payload?.tabId, msg.payload?.url, msg.payload?.title);
-          sendResponse({ ok: true });
+        }
+        case 'tab-deactivated':
+          sendResponse({ ok: true, paused: Boolean(session?.pauseTabAudioForInactiveTab(msg.payload?.activeTabId)) });
+          break;
+        case 'debug-target':
+          // 测试/诊断用：目标 tab 与实际音轨 tab 都返回，找不到跟随失败的具体断点。
+          sendResponse({
+            ok: true,
+            targetTabId: session?.settings?.targetTabId ?? null,
+            audioTabId: session?.tabAudio?.tabId ?? null,
+            lastSwitchError: session?.lastSwitchError || '',
+            captureMode: session?.captureMode || '',
+          });
           break;
         default:
           sendResponse({ ok: false, error: `未知请求 ${msg.type}` });

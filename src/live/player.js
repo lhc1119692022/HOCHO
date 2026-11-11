@@ -6,24 +6,39 @@
 //   stopRun() 返回值 → playback.stopped（被打断时，当前片段已播放的毫秒数）
 
 const START_LEAD_SEC = 0.06;
+// 模型的 TTS 输出普遍比视频原声小不少，默认给它一个提升，否则和视频一起播时听不清。
+const DEFAULT_VOLUME = 1.8;
 
 export class PcmPlayer extends EventTarget {
   constructor() {
     super();
     this.ctx = null;
     this.output = null;
+    this.limiter = null;
     this.sampleRate = 48000;
     this.runs = new Map();
     this.finishedRuns = new Set();
     this.nextTime = 0;
     this.active = false;
+    // init() 之前设置的音量要记住，否则会在创建 gain 时丢掉。
+    this.volume = DEFAULT_VOLUME;
   }
 
   async init() {
     if (this.ctx) return;
     this.ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+
+    // 音量提升后再过一道限幅器：调大时不会削波破音，听感也更接近视频原声的响度。
     this.output = this.ctx.createGain();
-    this.output.connect(this.ctx.destination);
+    this.output.gain.value = this.volume;
+    this.limiter = this.ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -3;
+    this.limiter.knee.value = 0;
+    this.limiter.ratio.value = 20;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.12;
+    this.output.connect(this.limiter).connect(this.ctx.destination);
+
     if (this.ctx.state === 'suspended') await this.ctx.resume().catch(() => {});
   }
 
@@ -41,7 +56,10 @@ export class PcmPlayer extends EventTarget {
   }
 
   setVolume(value) {
-    if (this.output) this.output.gain.value = value;
+    const level = Number(value);
+    if (!Number.isFinite(level) || level < 0) return;
+    this.volume = level;
+    if (this.output) this.output.gain.value = level;
   }
 
   getRun(runId, turnId) {

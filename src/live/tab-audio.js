@@ -9,15 +9,18 @@
 // 注意：offscreen 不能直接调用 chrome.tabCapture，streamId 由后台（或弹窗）
 // 通过 getMediaStreamId 取得，再交给这里用 getUserMedia({ chromeMediaSource: 'tab' }) 打开。
 
-const DUCK_LEVEL = 0.16; // 她说话时，视频音量保留约 16%
+// 她或你说话时把视频压下去，但不要压到听不见：保留 40%，人声还听得清背景。
+const DUCK_LEVEL = 0.4;
 const DUCK_DOWN_SEC = 0.12;
 const DUCK_UP_SEC = 0.28;
 const AUDIBLE_RMS = 0.004;
 
 export class TabAudioCapture extends EventTarget {
-  constructor({ duckLevel = DUCK_LEVEL, onFrame = null } = {}) {
+  constructor({ duckLevel = DUCK_LEVEL, volume = 1, onFrame = null } = {}) {
     super();
     this.duckLevel = duckLevel;
+    // 用户自己调的视频音量倍率（1 = 原样）。设备/系统差异导致偏小时可以调大。
+    this.volume = volume;
     this.onFrame = onFrame; // (pcm16 ArrayBuffer) => void，供第二条 MOSS Live 监听连接上行
     this.tapNode = null;
     this.stream = null;
@@ -95,7 +98,7 @@ export class TabAudioCapture extends EventTarget {
         this.ctx = new AudioContext({ latencyHint: 'interactive' });
         this.source = this.ctx.createMediaStreamSource(this.stream);
         this.gain = this.ctx.createGain();
-        this.gain.gain.value = this.ducked ? this.duckLevel : 1;
+        this.gain.gain.value = this.targetGain();
         this.source.connect(this.gain).connect(this.ctx.destination);
 
         // 用来判断视频是否真的有声音：界面显示「在听视频」，也供会话判断媒体活跃度。
@@ -134,13 +137,29 @@ export class TabAudioCapture extends EventTarget {
     }
   }
 
+  // 当前的输出增益：用户音量 × （说话时压到 duckLevel）。
+  targetGain() {
+    return this.volume * (this.ducked ? this.duckLevel : 1);
+  }
+
+  // 用户调整视频音量（0~2）：实时生效，正在压低时也按新音量重算。
+  setVolume(volume) {
+    const value = Number(volume);
+    if (!Number.isFinite(value) || value < 0) return;
+    this.volume = value;
+    if (!this.gain || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.gain.gain.cancelScheduledValues(now);
+    this.gain.gain.setTargetAtTime(this.targetGain(), now, 0.02);
+  }
+
   // 她说话时压低视频音量；说完平滑恢复。
   setDucked(ducked) {
     if (this.ducked === ducked) return;
     this.ducked = ducked;
     if (!this.gain || !this.ctx) return;
     const now = this.ctx.currentTime;
-    const target = ducked ? this.duckLevel : 1;
+    const target = this.targetGain();
     const duration = ducked ? DUCK_DOWN_SEC : DUCK_UP_SEC;
     this.gain.gain.cancelScheduledValues(now);
     this.gain.gain.setValueAtTime(this.gain.gain.value, now);
@@ -199,14 +218,18 @@ export class TabAudioCapture extends EventTarget {
 
 // offscreen 里没有 tabs / tabCapture，向后台要 streamId。
 export async function requestTabAudio(tabId = null) {
+  let res;
   try {
-    const res = await chrome.runtime.sendMessage({
+    res = await chrome.runtime.sendMessage({
       target: 'bg',
       type: 'tab-audio-stream',
       ...(Number.isInteger(tabId) ? { payload: { tabId } } : {}),
     });
-    return res?.ok ? res : null;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`请求标签页声音失败：${error?.message || error}`);
   }
+  if (!res?.ok || !res.streamId) {
+    throw new Error(res?.error || '后台没有返回标签页声音采集流');
+  }
+  return res;
 }

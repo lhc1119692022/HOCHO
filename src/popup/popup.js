@@ -11,7 +11,7 @@ import {
   VOICE_LIBRARY_URL,
 } from '../shared/defaults.js';
 import { loadSettings, saveSettings, popularVoices } from '../shared/storage.js';
-import { listAccountVoices, listModels } from '../shared/moss-api.js';
+import { listAccountVoices, listModels, MossApiError } from '../shared/moss-api.js';
 import { removeAuthRule } from '../shared/auth-rule.js';
 import { probeProactiveComment } from '../live/proactive-probe.js';
 
@@ -39,13 +39,15 @@ const el = {
   videoTypeRow: $('videoTypeRow'),
   videoTypeSelect: $('videoTypeSelect'),
   otherTabHint: $('otherTabHint'),
+  followHint: $('followHint'),
+  targetSwitchHint: $('targetSwitchHint'),
+  targetSwitchText: $('targetSwitchText'),
   errorPanel: $('errorPanel'),
   errorList: $('errorList'),
   errorClose: $('errorClose'),
   proactivityControl: $('proactivityControl'),
   probeBtn: $('probeBtn'),
   probeHint: $('probeHint'),
-  allUrlsToggle: $('allUrlsToggle'),
   modeSlider: $('modeSlider'),
   modeThumb: $('modeThumb'),
   scrim: $('scrim'),
@@ -82,10 +84,11 @@ const el = {
   instructionsBody: $('instructionsBody'),
   instructionsInput: $('instructionsInput'),
   instructionsReset: $('instructionsReset'),
-  memoryToggle: $('memoryToggle'),
-  separateToggle: $('separateToggle'),
+  memorySharedToggle: $('memorySharedToggle'),
   qualityControl: $('qualityControl'),
   modelInput: $('modelInput'),
+  clearDataBtn: $('clearDataBtn'),
+  clearDataHint: $('clearDataHint'),
 };
 
 const PENDING_KEY = 'pendingAction';
@@ -93,6 +96,8 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
 const MODE_ORDER = ['auto', 'screen', 'camera'];
 const QUALITY_ORDER = ['low', 'standard', 'high'];
 const PROACTIVITY_ORDER = ['quiet', 'normal', 'lively'];
+// 她的声音比视频原声小，固定放大到这个倍数（原来做成滑块，后来去掉了）。
+const DEFAULT_VOICE_VOLUME = 1.8;
 const GRADIENTS = [
   ['#6c5cff', '#22c3f0'],
   ['#a66bff', '#ff7ab6'],
@@ -220,7 +225,7 @@ async function grabTabAudio({ forMode = settings.screenMode } = {}) {
 }
 
 // 默认只要麦克风（和摄像头模式下的摄像头）。看网页靠「点图标时对当前网页的临时授权」，
-// 不再要「读取所有网站」；那个权限只在设置里打开「所有网站自动跟随」时才申请。
+// 网页截图由当前页的 activeTab 授权覆盖，不申请所有网站权限。
 async function missingFor(mode) {
   const miss = [];
   if ((await permState('microphone')) !== 'granted') miss.push('microphone');
@@ -358,17 +363,26 @@ function sizeField() {
 }
 
 function seedField() {
-  field.parts = Array.from({ length: 140 }, () => {
+  // 落叶：每片叶子有自己的下落速度、左右摇摆相位和旋转速度。
+  // x/y 是相对画布的归一化坐标（0~1），画的时候再乘实际尺寸，窗口大小变化也不用重新播种。
+  field.parts = Array.from({ length: 26 }, () => {
     const z = Math.random();
     return {
-      a: Math.random() * Math.PI * 2,
-      r0: 80 + Math.pow(Math.random(), 1.35) * 120,
-      w: (0.035 + Math.random() * 0.11) * (Math.random() < 0.85 ? 1 : -1),
-      s: 0.6 + z * 1.7,
+      x: Math.random(),
+      y: Math.random(),
+      sway: 0.02 + Math.random() * 0.05, // 左右摆动幅度
+      swayPhase: Math.random() * Math.PI * 2,
+      swaySpeed: 0.5 + Math.random() * 0.7,
+      fallSpeed: 0.008 + z * 0.022, // 每秒下落多少（归一化）
+      spin: (Math.random() < 0.5 ? -1 : 1) * (0.4 + Math.random() * 1.1),
+      angle: Math.random() * Math.PI * 2,
+      size: 11 + z * 15,
       z,
-      c: PALETTE[Math.random() < 0.07 ? 3 : Math.floor(Math.random() * 3)],
-      p: Math.random() * Math.PI * 2,
-      tilt: 0.74 + Math.random() * 0.18,
+      c: PALETTE[Math.random() < 0.12 ? 3 : Math.floor(Math.random() * 3)],
+      // 0 正对观众（最宽），1 侧对观众（最细），用来做翻面感
+      flipPhase: Math.random() * Math.PI * 2,
+      flipSpeed: 0.6 + Math.random() * 1.0,
+      near: Math.random() < 0.55,
     };
   });
 }
@@ -381,6 +395,33 @@ function fieldTarget() {
   return 0.3;
 }
 
+// 一片叶子：中间宽、两端尖的椭圆形，带两侧对称的弧度。
+// widthRatio < 1 时叶片变细，用来模拟翻面。
+function drawLeaf(ctx, x, y, size, angle, widthRatio, alpha, color) {
+  const h = size * 0.5;
+  const w = size * 0.34 * widthRatio;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha.toFixed(3)})`;
+  ctx.beginPath();
+  // 从叶尖开始，右侧弧线到叶柄，左侧弧线回到叶尖
+  ctx.moveTo(0, -h);
+  ctx.bezierCurveTo(w * 1.25, -h * 0.55, w * 1.1, h * 0.55, 0, h);
+  ctx.bezierCurveTo(-w * 1.1, h * 0.55, -w * 1.25, -h * 0.55, 0, -h);
+  ctx.fill();
+  // 叶脉：只在叶片足够宽时才画，否则看起来是脏点
+  if (widthRatio > 0.5) {
+    ctx.strokeStyle = `rgba(255, 255, 255, ${(alpha * 0.45).toFixed(3)})`;
+    ctx.lineWidth = Math.max(0.4, size * 0.035);
+    ctx.beginPath();
+    ctx.moveTo(0, -h * 0.72);
+    ctx.lineTo(0, h * 0.72);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawField(now) {
   const dt = Math.min(0.05, field.last ? (now - field.last) / 1000 : 0.016) * (slowMotion ? 0.35 : 1);
   field.last = now;
@@ -388,31 +429,49 @@ function drawField(now) {
   field.lvl += (level - field.lvl) * Math.min(1, dt * 8);
   field.energy += (fieldTarget() - field.energy) * Math.min(1, dt * 2.5);
 
-  const { ctx, dpr, cx, cy, energy } = field;
-  ctx.clearRect(0, 0, el.field.width, el.field.height);
+  const { ctx, dpr, energy } = field;
+  const W = el.field.width;
+  const H = el.field.height;
+  ctx.clearRect(0, 0, W, H);
 
-  const glow = ctx.createRadialGradient(cx, cy, 50 * dpr, cx, cy, 190 * dpr);
-  glow.addColorStop(0, `rgba(108, 92, 255, ${0.08 + energy * 0.16})`);
-  glow.addColorStop(0.55, `rgba(34, 195, 240, ${0.03 + energy * 0.07})`);
+  // 中心的柔光，随活跃度增强
+  const glow = ctx.createRadialGradient(field.cx, field.cy, 50 * dpr, field.cx, field.cy, 200 * dpr);
+  glow.addColorStop(0, `rgba(108, 92, 255, ${0.10 + energy * 0.16})`);
+  glow.addColorStop(0.55, `rgba(34, 195, 240, ${0.04 + energy * 0.08})`);
   glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
   ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, el.field.width, el.field.height);
+  ctx.fillRect(0, 0, W, H);
 
-  const speed = 0.35 + energy * 2.1;
-  const swell = snap.speaking ? 14 : 5;
+  // 活跃度越高：落得稍快、摆得更大、翻面更明显、也更不透明。
+  const speed = 0.55 + energy * 1.8;
+  const swayBoost = 0.7 + energy * 0.9;
+
   for (const p of field.parts) {
-    p.a += p.w * dt * speed;
-    let r = p.r0 * (1 + 0.035 * Math.sin(field.t * 0.6 + p.p));
-    r += energy * swell * Math.sin(field.t * 1.3 + p.p * 1.7);
-    if (snap.listening && !snap.speaking) r *= 1 - field.lvl * 0.12;
-    const x = cx + Math.cos(p.a) * r * dpr;
-    const y = cy + Math.sin(p.a) * r * p.tilt * dpr;
-    const alpha = Math.min(0.9, (0.14 + p.z * 0.42) * (0.55 + energy * 0.8));
-    const size = p.s * (1 + energy * 0.45) * dpr;
-    ctx.fillStyle = `rgba(${p.c[0]}, ${p.c[1]}, ${p.c[2]}, ${alpha.toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-    ctx.fill();
+    p.y += p.fallSpeed * dt * speed;
+    p.swayPhase += p.swaySpeed * dt;
+    p.angle += p.spin * dt * (0.5 + energy * 0.7);
+    p.flipPhase += p.flipSpeed * dt * (0.6 + energy * 0.9);
+
+    // 飘出底部就从顶部重新落下，横向随机换一个位置，避免看起来是循环。
+    if (p.y > 1.12) {
+      p.y = -0.12;
+      p.x = Math.random();
+    }
+
+    // 说话时叶子整体向外轻推一点，像是在震动。
+    const swell = snap.speaking ? 0.06 : 0.015;
+    const push = energy * swell * Math.sin(field.t * 1.3 + p.swayPhase);
+    const nx = p.x + Math.sin(p.swayPhase) * p.sway * swayBoost + push;
+    const ny = Math.min(1.12, p.y) + push * 0.4;
+
+    const x = nx * W;
+    const y = ny * H;
+    // 翻面：cos 从 -1 到 1，映射成 0.12~1 的宽度比例
+    const widthRatio = 0.12 + 0.88 * Math.abs(Math.cos(p.flipPhase));
+    const alpha = Math.min(0.85, (0.16 + p.z * 0.4) * (0.6 + energy * 0.7));
+    const size = p.size * (1 + energy * 0.22) * dpr * (p.near ? 1 : 0.7);
+
+    drawLeaf(ctx, x, y, size, p.angle, widthRatio, alpha, p.c);
   }
   requestAnimationFrame(drawField);
 }
@@ -480,11 +539,25 @@ function renderListen(running) {
   el.videoTypeRow.hidden = !(enabled && running && tab.active);
   el.videoTypeSelect.value = snap.videoType?.typeId || 'general';
 
+  const showFollowHint = running;
+  el.followHint.hidden = !showFollowHint;
+  if (showFollowHint) {
+    el.followHint.textContent = '切换到其他标签页后，点击工具栏 HOCHO 图标切换陪看目标。';
+  }
+
+  const targetSwitch = snap.targetSwitch;
+  const needsAudioClick = running && targetSwitch && !targetSwitch.audio;
+  el.targetSwitchHint.hidden = !needsAudioClick;
+  if (needsAudioClick) {
+    const reason = targetSwitch.error ? `（${targetSwitch.error}）` : '';
+    el.targetSwitchText.textContent = `已切到「${targetSwitch.title || '当前网页'}」，但没有接上这个网页的声音${reason}`;
+  }
+
   // 当前页不是陪看页：说清楚，并提示怎么解决。
   const other = running ? snap.otherTab : null;
   el.otherTabHint.hidden = !other;
   if (other) {
-    el.otherTabHint.textContent = `你现在看的是「${other.showing || '另一个网页'}」，不是陪看中的「${other.target || '那个网页'}」。回到那个网页，或在当前网页点一下 HOCHO 图标切过来。`;
+    el.otherTabHint.textContent = `当前页不是陪看页。点一下工具栏 HOCHO 图标，就切换到「${other.showing || '当前网页'}」（对话不会断）。`;
   }
 }
 
@@ -564,6 +637,8 @@ async function startSession() {
       videoQuality: settings.videoQuality,
       screenMode: settings.screenMode,
       shareVideoAudio: Boolean(settings.shareVideoAudio),
+      // 她的声音固定放大（模型语音本身比视频原声小），不再提供滑块。
+      voiceVolume: DEFAULT_VOICE_VOLUME,
       proactivityVerified: Boolean(settings.proactivityVerified),
       targetTabId: tabAudio?.tabId ?? null,
       targetUrl: tabAudio?.url || '',
@@ -837,6 +912,8 @@ async function addCustomVoice() {
     el.newVoiceId.focus();
     return;
   }
+  // 添加前先刷新一次账号音色，避免用旧缓存的名字。
+  await refreshAccountVoices();
   const known = (settings.accountVoices || []).find((v) => v.id === id);
   settings.customVoices = [
     ...(settings.customVoices || []).filter((v) => v.id !== id),
@@ -848,6 +925,25 @@ async function addCustomVoice() {
   el.addVoiceRow.hidden = true;
   renderVoices();
   if (isRunning()) toOffscreen('command', { cmd: 'set-voice', value: id });
+}
+
+// 音色库里的名字可能被改过（或首次添加时账号里还没有这个名字）。
+// 每次渲染音色列表时，用最新拉到的账号音色把名字统一刷新一遍。
+function syncVoiceNames() {
+  const account = settings.accountVoices || [];
+  if (!account.length) return false;
+  const byId = new Map(account.map((v) => [v.id, v.name]));
+  let changed = false;
+  settings.customVoices = (settings.customVoices || []).map((voice) => {
+    const latest = byId.get(voice.id);
+    // 只在名字确实变了、且是「音色 xxx」这种占位名或旧名时替换。
+    if (latest && latest !== voice.name) {
+      changed = true;
+      return { ...voice, name: latest };
+    }
+    return voice;
+  });
+  return changed;
 }
 
 async function removeCustomVoice(id) {
@@ -863,25 +959,76 @@ function renderSettings() {
   el.apiKeyInput.value = settings.apiKey || '';
   el.apiKeyInput.type = 'password';
   el.apiKeyEye.classList.remove('reveal');
-  el.memoryToggle.checked = Boolean(settings.memoryEnabled);
-  el.separateToggle.checked = Boolean(settings.separateMemory);
-  el.separateToggle.disabled = !settings.memoryEnabled;
+  const independent = Boolean(settings.separateMemory);
+  // 「记忆共享」默认勾选；取消勾选表示角色独立记忆。
+  settings.memoryEnabled = true;
+  settings.separateMemory = independent;
+  el.memorySharedToggle.checked = !independent;
   el.instructionsInput.value = settings.instructions || '';
   el.modelInput.value = settings.selectedModel || LIVE_MODEL;
   paintSeg(el.qualityControl, 'quality', QUALITY_ORDER, settings.videoQuality);
+  // 音色库里的名字可能被改过：打开设置时拉一次最新的，再渲染。
+  syncVoiceNames();
   renderVoices();
-  el.allUrlsToggle.checked = Boolean(settings.allUrlsFollow);
-  chrome.permissions
-    .contains({ origins: ['<all_urls>'] })
-    .then((granted) => {
-      el.allUrlsToggle.checked = Boolean(settings.allUrlsFollow) && granted;
-    })
-    .catch(() => {});
+  refreshAccountVoices().then(() => renderVoices());
+  renderStorageInfo();
 }
 
 function openSettings() {
   renderSettings();
   openSheet('settings');
+}
+
+// ==================== 本地数据清理 ====================
+
+// 算一下插件在本地占了多少空间：设置、对话历史、按视频存的摘要、角色头像。
+async function measureStorage() {
+  const all = await chrome.storage.local.get(null);
+  const bytes = new Blob([JSON.stringify(all)]).size;
+  const messages = Array.isArray(all.messages) ? all.messages.length : 0;
+  const summaries = all.videoSummaries && typeof all.videoSummaries === 'object'
+    ? Object.keys(all.videoSummaries).length
+    : 0;
+  return { bytes, messages, summaries };
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+async function renderStorageInfo() {
+  if (!el.clearDataHint) return;
+  try {
+    const { bytes, messages, summaries } = await measureStorage();
+    const parts = [`占用 ${formatBytes(bytes)}`];
+    if (messages) parts.push(`${messages} 条对话`);
+    if (summaries) parts.push(`${summaries} 个视频的摘要`);
+    el.clearDataHint.textContent = `本地已用：${parts.join(' · ')}`;
+  } catch {
+    el.clearDataHint.textContent = '本地已用：读取失败';
+  }
+}
+
+async function clearLocalData() {
+  const { bytes } = await measureStorage();
+  const ok = confirm(
+    `要清理本地数据吗？\n\n会清掉：对话历史、各视频的摘要、缓存的音色列表（约 ${formatBytes(bytes)}）。\n不会动：API Key、角色、设置。\n\n清理后当前这一轮对话不受影响，但下次打开就看不到之前的记录了。`,
+  );
+  if (!ok) return;
+  await chrome.storage.local.remove(['messages', 'videoSummaries', 'videoTypeByKey', 'accountVoices', 'modelOptions', 'lastTabActivated']);
+  settings.messages = [];
+  settings.videoSummaries = {};
+  settings.videoTypeByKey = {};
+  snap.lines = [];
+  snap.messages = [];
+  // 让正在跑的会话也把内存里的历史清掉，否则它下次保存又把旧的写回去。
+  if (isRunning()) await toOffscreen('command', { cmd: 'clear-history' });
+  renderChat();
+  renderSubtitle();
+  await renderStorageInfo();
+  toast('info', '本地数据已清理。');
 }
 
 // 点「连接」：保存并校验 Key，成功只亮一个绿点。
@@ -896,14 +1043,29 @@ async function connectKey() {
     return;
   }
   el.keyDot.dataset.state = 'checking';
+  el.keyDot.title = '正在检查 API Key';
+  el.keyError.hidden = true;
+  el.keyError.dataset.level = '';
   el.connectBtn.disabled = true;
   try {
     await listModels({ apiKey: key, apiBase: settings.apiBase });
     el.keyDot.dataset.state = 'ok';
+    el.keyDot.title = 'API Key 可用';
     refreshAccountVoices();
   } catch (error) {
-    el.keyDot.dataset.state = 'bad';
-    el.keyError.textContent = error.message;
+    if (error instanceof MossApiError && error.status === 401) {
+      el.keyDot.dataset.state = 'bad';
+      el.keyDot.title = 'API Key 无效或已失效';
+      el.keyError.textContent = error.message;
+      el.keyError.dataset.level = 'error';
+    } else {
+      // /v1/models 的 HTTP/CORS/网络校验失败，不等于 MOSS Live WebSocket Key 不可用。
+      // Key 仍已安全保存；真正的实时权限在用户开始陪看时检查。
+      el.keyDot.dataset.state = 'saved';
+      el.keyDot.title = 'Key 已保存；模型列表接口未能验证，开始实时会话时再确认';
+      el.keyError.textContent = 'Key 已保存，但模型列表接口暂时无法验证。这不代表实时连接失败；开始陪看时会单独检查。';
+      el.keyError.dataset.level = 'warn';
+    }
     el.keyError.hidden = false;
   } finally {
     el.connectBtn.disabled = false;
@@ -915,15 +1077,28 @@ async function checkKeySilently() {
   try {
     await listModels({ apiKey: settings.apiKey, apiBase: settings.apiBase });
     el.keyDot.dataset.state = 'ok';
-  } catch {
-    el.keyDot.dataset.state = 'bad';
+    el.keyDot.title = 'API Key 可用';
+  } catch (error) {
+    if (error instanceof MossApiError && error.status === 401) {
+      el.keyDot.dataset.state = 'bad';
+      el.keyDot.title = 'API Key 无效或已失效';
+    } else {
+      el.keyDot.dataset.state = 'saved';
+      el.keyDot.title = 'Key 已保存；模型列表接口未能验证，开始实时会话时再确认';
+    }
   }
 }
 
 async function refreshAccountVoices() {
+  if (!settings.apiKey) return;
   try {
     const voices = await listAccountVoices({ apiKey: settings.apiKey, apiBase: settings.apiBase });
     settings.accountVoices = voices;
+    if (syncVoiceNames()) {
+      // 名字有更新：把新的名字存下来，并重画列表。
+      await saveSettings({ accountVoices: voices, customVoices: settings.customVoices });
+      return;
+    }
     await saveSettings({ accountVoices: voices });
   } catch {
     // 只用来给按 ID 添加的音色补名字，失败无所谓
@@ -986,25 +1161,7 @@ el.proactivityControl.addEventListener('click', (event) => {
   paintSeg(el.proactivityControl, 'proactivity', PROACTIVITY_ORDER, editing.proactivity);
 });
 el.probeBtn.addEventListener('click', runProbe);
-
-el.allUrlsToggle.addEventListener('change', async () => {
-  if (el.allUrlsToggle.checked) {
-    const granted = await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
-    if (!granted) {
-      // 弹窗里弹不出授权框，走授权页；授权完回来自动打开这个开关。
-      el.allUrlsToggle.checked = false;
-      await requestPermissions(['screen'], { action: 'all-urls' });
-      return;
-    }
-    settings.allUrlsFollow = true;
-    await saveSettings({ allUrlsFollow: true });
-  } else {
-    settings.allUrlsFollow = false;
-    await saveSettings({ allUrlsFollow: false });
-    await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
-  }
-});
-
+el.clearDataBtn.addEventListener('click', clearLocalData);
 el.charChip.addEventListener('click', () => {
   renderCharacterList();
   openSheet('characters');
@@ -1081,15 +1238,11 @@ el.instructionsReset.addEventListener('click', async () => {
   await saveSettings({ instructions: DEFAULT_INSTRUCTIONS });
 });
 
-el.memoryToggle.addEventListener('change', async () => {
-  settings.memoryEnabled = el.memoryToggle.checked;
-  el.separateToggle.disabled = !settings.memoryEnabled;
-  await saveSettings({ memoryEnabled: settings.memoryEnabled });
-});
-el.separateToggle.addEventListener('change', async () => {
-  settings.separateMemory = el.separateToggle.checked;
-  await saveSettings({ separateMemory: settings.separateMemory });
-});
+  el.memorySharedToggle.addEventListener('change', async () => {
+    settings.memoryEnabled = true;
+    settings.separateMemory = !el.memorySharedToggle.checked;
+    await saveSettings({ memoryEnabled: true, separateMemory: settings.separateMemory });
+  });
 
 el.qualityControl.addEventListener('click', async (event) => {
   const btn = event.target.closest('.seg-opt');
@@ -1157,6 +1310,10 @@ chrome.runtime.onMessage.addListener((msg) => {
       snap.videoType = { typeId: detail.typeId || 'general', videoKey: detail.videoKey || '' };
       renderChat();
       break;
+    case 'target-switched':
+      snap.targetSwitch = detail;
+      renderChat();
+      break;
     case 'other-tab':
       snap.otherTab = detail;
       renderChat();
@@ -1200,15 +1357,6 @@ async function resumePending() {
   await chrome.storage.local.remove(PENDING_KEY);
   if (Date.now() - (pending.at || 0) > PENDING_TTL_MS) return;
   preferredTabId = Number.isInteger(pending.tabId) ? pending.tabId : null;
-  if (pending.action === 'all-urls') {
-    const granted = await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
-    if (granted) {
-      settings.allUrlsFollow = true;
-      await saveSettings({ allUrlsFollow: true });
-      toast('info', '已打开「所有网站自动跟随」：切换标签页时会自动跟过去。');
-    }
-    return;
-  }
   const mode = pending.action === 'mode' ? pending.mode : settings.screenMode;
   if ((await missingFor(mode)).length) return;
   if (pending.action === 'mode') {
@@ -1224,26 +1372,44 @@ async function resumePending() {
 }
 
 async function init() {
-  settings = await loadSettings();
-  const res = await toOffscreen('snapshot');
-  if (res?.ok && res.snapshot) snap = { ...snap, ...res.snapshot, lines: res.snapshot.lines || [] };
-
-  renderChat();
-  renderSubtitle();
-  renderSettings();
+  // 先同步把能画的画出来，避免打开瞬间一片空白（看起来像闪退）。
   sizeField();
   seedField();
   requestAnimationFrame(drawField);
   window.addEventListener('resize', sizeField);
 
-  if (!settings.apiKey) {
-    openSettings();
-    setTimeout(() => el.apiKeyInput.focus(), 100);
-    return;
+  try {
+    settings = await loadSettings();
+
+    // 先渲染一次已知状态，再去问后台要快照；两次都渲染，用户不会看到空白。
+    renderChat();
+    renderSettings();
+
+    // 快照可能因为 offscreen 还没起来而拿不到，不能让它卡住整个弹窗。
+    const res = await Promise.race([
+      toOffscreen('snapshot'),
+      new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+    ]);
+    if (res?.ok && res.snapshot) snap = { ...snap, ...res.snapshot, lines: res.snapshot.lines || [] };
+
+    renderChat();
+    renderSubtitle();
+    renderSettings();
+
+    if (!settings.apiKey) {
+      openSettings();
+      setTimeout(() => el.apiKeyInput.focus(), 100);
+      return;
+    }
+    checkKeySilently();
+    resumePending();
+    followCurrentTab();
+  } catch (error) {
+    // 初始化任何一步出错，也要让界面可用，而不是停在空白/半截状态。
+    console.error('[HOCHO] popup init failed', error);
+    renderChat();
+    toast('error', `界面初始化出错：${error?.message || error}`);
   }
-  checkKeySilently();
-  resumePending();
-  followCurrentTab();
 }
 
 // 陪伴进行中、你在另一个网页点了 HOCHO 图标：把陪看目标切到这个网页（对话不中断）。
@@ -1251,7 +1417,26 @@ async function followCurrentTab() {
   if (!isRunning() || settings.screenMode === 'camera') return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
   if (!tab?.id || /^(chrome|edge|about|chrome-extension|devtools):/i.test(tab.url || '')) return;
-  toOffscreen('command', { cmd: 'set-target', tabId: tab.id, url: tab.url || '', title: tab.title || '' });
+  const result = await toOffscreen('command', {
+    cmd: 'set-target',
+    tabId: tab.id,
+    url: tab.url || '',
+    title: tab.title || '',
+  });
+  if (!result?.ok || !result.switched) {
+    toast('warn', `切换到这个网页失败：${result?.error || '当前采集模式不支持网页切换'}`);
+    return;
+  }
+  snap.targetSwitch = {
+    title: tab.title || '当前网页',
+    audio: result.audioTabId === tab.id,
+    requiresClick: result.audioTabId !== tab.id,
+    error: result.error || '',
+  };
+  if (!snap.targetSwitch.audio) {
+    toast('warn', `画面目标已切换，但声音没有接上：${snap.targetSwitch.error || '浏览器未提供采集流'}`);
+  }
+  renderChat();
 }
 
 init();
