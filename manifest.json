@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "HOCHO",
+  "version": "0.7.1",
+  "description": "边看网页、边刷视频边聊天的 AI 陪伴插件。",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "HOCHO",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "permissions": ["offscreen", "storage", "declarativeNetRequestWithHostAccess", "tabCapture", "activeTab"],
+  "host_permissions": ["https://api.mosi.cn/*", "wss://api.mosi.cn/*"],
+  "optional_host_permissions": ["<all_urls>"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "hocho",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "description": "HOCHO AI 陪伴 Chrome 插件（测试脚本用；插件本身不需要运行任何程序）",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "test:permission": "node tests/e2e/permission-flow.mjs",
+    "test:listener": "node tests/e2e/video-listener-e2e.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}

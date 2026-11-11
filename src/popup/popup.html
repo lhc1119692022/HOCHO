@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HOCHO</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <!-- 图标（线性，1.8 描边） -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="m2 2 20 20"/><path d="M18.89 13.23A7 7 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M12 19v3"/></symbol>
+      <symbol id="i-auto" viewBox="0 0 24 24"><path d="M12 3.5 13.9 9 19.5 11l-5.6 2L12 18.5 10.1 13 4.5 11l5.6-2Z"/><path d="M19 3v3M17.5 4.5h3"/></symbol>
+      <symbol id="i-screen" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8 20.5h8M12 16.5v4"/></symbol>
+      <symbol id="i-cam" viewBox="0 0 24 24"><path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2.2"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 11v2M7 8v8M11 4v16M15 7v10M19 10v4"/></symbol>
+      <symbol id="i-wave-off" viewBox="0 0 24 24"><path d="M3 11v2M7 8v8M11 4v16M15 7v10M19 10v4"/><path d="m2 2 20 20"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c4.84 0 8.4 3.33 9.94 6.65a1 1 0 0 1 0 .7 10.75 10.75 0 0 1-1.44 2.49"/><path d="M14.08 14.16a3 3 0 0 1-4.17-4.17"/><path d="M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14"/><path d="m2 2 20 20"/></symbol>
+    </svg>
+
+    <!-- ==================== 主界面 ==================== -->
+    <section id="page-chat" class="page">
+      <header class="top">
+        <div class="char-group">
+          <button id="charChip" class="chip" type="button" title="切换角色">
+            <span id="chipAvatar" class="avatar xs"></span>
+            <span id="chipName" class="chip-name"></span>
+            <svg class="chev"><use href="#i-chev"/></svg>
+          </button>
+          <button id="addCharacter" class="icon-btn accent" type="button" title="新建角色">
+            <svg><use href="#i-plus"/></svg>
+          </button>
+        </div>
+        <button id="settingsBtn" class="icon-btn" type="button" title="设置">
+          <svg><use href="#i-gear"/></svg>
+        </button>
+      </header>
+
+      <div id="stage" class="stage">
+        <canvas id="field" class="particles"></canvas>
+        <div class="orb-wrap">
+          <button id="mainBtn" class="orb" type="button" aria-label="开始">
+            <span id="orbAvatar" class="avatar orb-avatar"></span>
+          </button>
+        </div>
+        <button id="status" class="status" data-state="idle" type="button" title="点一下查看最近的出错记录">
+          <i class="dot"></i><span id="statusText">轻触开始</span>
+        </button>
+        <label id="videoTypeRow" class="vtype" hidden title="TA 按这类视频的看法去理解，自动判断，可以手动改">
+          <span>视频类型</span>
+          <select id="videoTypeSelect">
+            <option value="knowledge">科普 / 知识</option>
+            <option value="short">短视频 / 段子</option>
+            <option value="series">连续剧 / 电影</option>
+            <option value="music">音乐 / MV</option>
+            <option value="live">直播 / 体育</option>
+            <option value="general">通用</option>
+          </select>
+        </label>
+        <p id="otherTabHint" class="other-tab" hidden></p>
+        <div id="subtitle" class="subtitle" hidden>
+          <b id="subtitleWho"></b><span id="subtitleText"></span>
+        </div>
+      </div>
+
+      <div id="toast" class="toast" hidden><span id="toastText"></span></div>
+      <div id="errorPanel" class="error-panel" hidden>
+        <div class="error-head"><b>最近的出错记录</b><button id="errorClose" class="link" type="button">收起</button></div>
+        <ol id="errorList"></ol>
+      </div>
+
+      <footer class="dock">
+        <button id="micBtn" class="mic" type="button" title="麦克风">
+          <svg class="on"><use href="#i-mic"/></svg>
+          <svg class="off"><use href="#i-mic-off"/></svg>
+        </button>
+        <button id="listenBtn" class="mic listen" type="button" title="听视频">
+          <svg class="on"><use href="#i-wave"/></svg>
+          <svg class="off"><use href="#i-wave-off"/></svg>
+        </button>
+        <div id="modeSlider" class="seg" role="tablist">
+          <span id="modeThumb" class="seg-thumb"></span>
+          <button class="seg-opt" data-mode="auto" type="button"><svg><use href="#i-auto"/></svg>Auto</button>
+          <button class="seg-opt" data-mode="screen" type="button"><svg><use href="#i-screen"/></svg>屏幕</button>
+          <button class="seg-opt" data-mode="camera" type="button"><svg><use href="#i-cam"/></svg>摄像头</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- ==================== 角色列表 ==================== -->
+    <section id="sheet-characters" class="sheet">
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <h2>角色</h2>
+          <button class="icon-btn ghost" data-close type="button" title="关闭"><svg><use href="#i-x"/></svg></button>
+        </header>
+        <div id="characterList" class="char-list"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 角色编辑 ==================== -->
+    <section id="sheet-editor" class="sheet">
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <h2 id="editorTitle">编辑角色</h2>
+          <button class="icon-btn ghost" data-close type="button" title="关闭"><svg><use href="#i-x"/></svg></button>
+        </header>
+        <div class="sheet-body">
+          <div class="hero-row">
+            <span id="editorAvatar" class="avatar lg"></span>
+            <div class="hero-fields">
+              <input id="nameInput" type="text" maxlength="40" placeholder="名字" />
+              <div class="pills">
+                <button id="avatarUpload" class="pill" type="button">上传图片</button>
+                <button id="avatarEmoji" class="pill" type="button">表情</button>
+                <button id="avatarInitial" class="pill" type="button">首字</button>
+                <input id="avatarFile" type="file" accept="image/*" hidden />
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><span class="label">人设</span><em id="personaCount" class="count"></em></div>
+            <textarea id="personaInput" rows="9" maxlength="8000"></textarea>
+          </div>
+          <div class="field">
+            <span class="label">音色</span>
+            <div id="editorVoiceSelect" class="select"></div>
+          </div>
+          <div class="field">
+            <span class="label">主动评论</span>
+            <div id="proactivityControl" class="seg small">
+              <span class="seg-thumb"></span>
+              <button class="seg-opt" data-proactivity="quiet" type="button">安静</button>
+              <button class="seg-opt" data-proactivity="normal" type="button">正常</button>
+              <button class="seg-opt" data-proactivity="lively" type="button">活泼</button>
+            </div>
+            <div class="probe-row">
+              <span id="probeHint" class="hint-text"></span>
+              <button id="probeBtn" class="link" type="button">测试一下</button>
+            </div>
+          </div>
+        </div>
+        <footer class="sheet-foot">
+          <button id="deleteCharacter" class="btn danger" type="button">删除</button>
+          <button id="saveCharacter" class="btn primary" type="button">保存</button>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ==================== 设置 ==================== -->
+    <section id="sheet-settings" class="sheet">
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <h2>设置</h2>
+          <button class="icon-btn ghost" data-close type="button" title="关闭"><svg><use href="#i-x"/></svg></button>
+        </header>
+        <div class="sheet-body">
+          <div class="field">
+            <span class="label">API Key<i id="keyDot" class="key-dot"></i></span>
+            <div class="key-row">
+              <div class="key-wrap">
+                <input id="apiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 MOSS API Key" />
+                <button id="apiKeyEye" class="eye" type="button" title="显示">
+                  <svg class="show"><use href="#i-eye"/></svg>
+                  <svg class="hide"><use href="#i-eye-off"/></svg>
+                </button>
+              </div>
+              <button id="connectBtn" class="btn primary sm" type="button">连接</button>
+            </div>
+            <span id="keyError" class="err" hidden></span>
+          </div>
+
+          <div class="field">
+            <span class="label">音色</span>
+            <div id="voiceSelect" class="select"></div>
+            <div class="links">
+              <button id="addVoiceBtn" class="link" type="button">＋ 按 ID 添加</button>
+              <button id="openVoiceLibrary" class="link" type="button">音色库 ↗</button>
+            </div>
+            <div id="addVoiceRow" class="key-row" hidden>
+              <input id="newVoiceId" type="text" placeholder="音色 ID" spellcheck="false" />
+              <button id="confirmVoice" class="btn primary sm" type="button">添加</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <button id="instructionsToggle" class="fold" type="button">
+              <span class="label">陪伴规则</span><svg class="chev"><use href="#i-chev"/></svg>
+            </button>
+            <div id="instructionsBody" class="fold-body" hidden>
+              <textarea id="instructionsInput" rows="6" maxlength="16000"></textarea>
+              <button id="instructionsReset" class="link" type="button">恢复默认</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="label">记忆</span>
+            <div class="checks">
+              <label class="check-item"><input id="memoryToggle" type="checkbox" class="check" /><span>长期记忆</span></label>
+              <label class="check-item" id="separateRow"><input id="separateToggle" type="checkbox" class="check" /><span>角色独立</span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="label">网页范围</span>
+            <div class="checks">
+              <label class="check-item"><input id="allUrlsToggle" type="checkbox" class="check" /><span>所有网站自动跟随</span></label>
+            </div>
+            <span class="hint-text">关闭时只看你点过 HOCHO 图标的网页，换了网页再点一下图标就会跟过去。打开后切换标签页会自动跟随，需要额外授权「读取所有网站」。</span>
+          </div>
+
+          <div class="field">
+            <span class="label">画面清晰度</span>
+            <div id="qualityControl" class="seg small">
+              <span class="seg-thumb"></span>
+              <button class="seg-opt" data-quality="low" type="button">省流</button>
+              <button class="seg-opt" data-quality="standard" type="button">标准</button>
+              <button class="seg-opt" data-quality="high" type="button">清晰</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="label">实时模型</span>
+            <input id="modelInput" type="text" spellcheck="false" placeholder="moss-live-1.0" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="scrim" class="scrim" hidden></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

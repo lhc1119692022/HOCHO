@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HOCHO · 授权</title>
+    <style>
+      :root {
+        --ink: #14152b;
+        --ink-2: #565a7a;
+        --ink-3: #9396b0;
+        --line: rgba(20, 21, 43, 0.08);
+        --a1: #6c5cff;
+        --a2: #22c3f0;
+        --ok: #18b67a;
+        --err: #e5484d;
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(40% 40% at 20% 15%, rgba(108, 92, 255, 0.16), transparent 70%),
+          radial-gradient(40% 40% at 85% 85%, rgba(34, 195, 240, 0.14), transparent 70%),
+          #f5f6fb;
+        color: var(--ink);
+      }
+      main {
+        width: min(440px, 92vw);
+        padding: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.9);
+        border-radius: 26px;
+        background: rgba(255, 255, 255, 0.78);
+        box-shadow: 0 24px 60px rgba(40, 40, 110, 0.12);
+        backdrop-filter: blur(24px);
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        color: var(--ink-3);
+      }
+      .brand i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--a1), var(--a2));
+      }
+      h1 { margin: 10px 0 6px; font-size: 21px; font-weight: 700; }
+      .progress { margin: 0 0 6px; color: var(--ink-3); font-size: 12px; }
+      .progress.ok { color: var(--ok); }
+      .tip { margin: 0 0 18px; color: var(--ink-3); font-size: 12px; line-height: 1.45; }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px;
+        margin-bottom: 10px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fff;
+      }
+      .item[hidden] { display: none; }
+      .ic {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 13px;
+        background: linear-gradient(135deg, rgba(108, 92, 255, 0.12), rgba(34, 195, 240, 0.12));
+        color: var(--a1);
+      }
+      .ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .txt { flex: 1; min-width: 0; }
+      .txt b { display: block; font-size: 14px; }
+      .txt small { display: block; margin-top: 2px; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
+      .act {
+        flex: none;
+        min-width: 72px;
+        padding: 9px 14px;
+        border: none;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--a1), #8a6bff);
+        color: #fff;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .act[data-state="granted"] { background: rgba(24, 182, 122, 0.12); color: var(--ok); cursor: default; }
+      .act[data-state="denied"] { background: rgba(229, 72, 77, 0.1); color: var(--err); }
+      .done {
+        display: none;
+        margin-top: 16px;
+        padding: 13px 14px;
+        border-radius: 16px;
+        background: rgba(24, 182, 122, 0.1);
+        color: #0f7a52;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .done.show { display: block; }
+      .done p { margin: 2px 0 10px; }
+      .done-actions { display: flex; gap: 8px; }
+      .done-actions button {
+        flex: 1;
+        padding: 9px 10px;
+        border: none;
+        border-radius: 11px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .done-actions .primary { background: var(--ok); color: #fff; }
+      .done-actions .ghost { background: rgba(15, 122, 82, 0.1); color: #0f7a52; }
+      .hint { margin: 12px 2px 0; color: var(--err); font-size: 12px; line-height: 1.5; min-height: 1em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="brand"><i></i>HOCHO</span>
+      <h1>开始之前，需要你点几下「允许」</h1>
+      <p class="progress" id="progress">已允许 0 / 0 项</p>
+      <p class="tip">这里只列出当前画面模式需要的权限。建议戴耳机：外放的视频声可能被麦克风再次收进去。</p>
+
+      <div class="item" data-perm="microphone" hidden>
+        <span class="ic"><svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg></span>
+        <span class="txt"><b>麦克风</b><small>和 TA 语音聊天</small></span>
+        <button class="act" type="button">允许</button>
+      </div>
+
+      <div class="item" data-perm="screen" hidden>
+        <span class="ic"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+        <span class="txt"><b>看网页</b><small>让 TA 看到你正在看的标签页，切换标签页会自动跟随</small></span>
+        <button class="act" type="button">允许</button>
+      </div>
+
+      <div class="item" data-perm="camera" hidden>
+        <span class="ic"><svg viewBox="0 0 24 24"><path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></span>
+        <span class="txt"><b>摄像头</b><small>让 TA 看到你</small></span>
+        <button class="act" type="button">允许</button>
+      </div>
+
+      <p class="hint" id="hint"></p>
+      <div class="done" id="done">
+        <b>这一页的事项都处理好了</b>
+        <p id="doneList"></p>
+        <div class="done-actions">
+          <button class="primary" id="finish" type="button">完成，回到网页</button>
+          <button class="ghost" id="later" type="button">稍后再说</button>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="permission.js"></script>
+  </body>
+</html>
